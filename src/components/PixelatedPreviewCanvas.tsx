@@ -2,6 +2,7 @@
 
 import React, { useRef, useEffect, TouchEvent, MouseEvent, useState } from 'react';
 import { MappedPixel } from '../utils/pixelation';
+import type { TextPlacementResult } from '../features/text-grid-core';
 
 interface PixelatedPreviewCanvasProps {
   mappedPixelData: MappedPixel[][] | null;
@@ -21,6 +22,7 @@ interface PixelatedPreviewCanvasProps {
   ) => void;
   highlightColorKey?: string | null;
   onHighlightComplete?: () => void;
+  textPreview?: TextPlacementResult | null;
 }
 
 // 绘制像素化画布的函数
@@ -29,7 +31,8 @@ const drawPixelatedCanvas = (
   canvas: HTMLCanvasElement | null,
   dims: { N: number; M: number } | null,
   highlightColorKey?: string | null,
-  isHighlighting?: boolean
+  isHighlighting?: boolean,
+  textPreview?: TextPlacementResult | null
 ) => {
   if (!canvas || !dims || !dataToDraw) {
     console.warn("drawPixelatedCanvas: Missing required parameters");
@@ -97,6 +100,31 @@ const drawPixelatedCanvas = (
       pixelatedCtx.strokeRect(drawX + 0.5, drawY + 0.5, cellWidthOutput, cellHeightOutput);
     }
   }
+
+  if (textPreview && textPreview.cells.length > 0) {
+    const fill = textPreview.valid ? 'rgba(31, 157, 138, 0.42)' : 'rgba(220, 38, 38, 0.34)';
+    const stroke = textPreview.valid ? 'rgba(31, 157, 138, 0.95)' : 'rgba(220, 38, 38, 0.95)';
+    pixelatedCtx.fillStyle = fill;
+
+    for (const cell of textPreview.cells) {
+      if (cell.x < 0 || cell.y < 0 || cell.x >= N || cell.y >= M) continue;
+      pixelatedCtx.fillRect(
+        cell.x * cellWidthOutput,
+        cell.y * cellHeightOutput,
+        cellWidthOutput,
+        cellHeightOutput,
+      );
+    }
+
+    pixelatedCtx.strokeStyle = stroke;
+    pixelatedCtx.lineWidth = Math.max(1, Math.min(cellWidthOutput, cellHeightOutput) * 0.1);
+    pixelatedCtx.strokeRect(
+      textPreview.bounds.x * cellWidthOutput + 0.5,
+      textPreview.bounds.y * cellHeightOutput + 0.5,
+      textPreview.bounds.width * cellWidthOutput,
+      textPreview.bounds.height * cellHeightOutput,
+    );
+  }
 };
 
 const PixelatedPreviewCanvas: React.FC<PixelatedPreviewCanvasProps> = ({
@@ -110,6 +138,7 @@ const PixelatedPreviewCanvas: React.FC<PixelatedPreviewCanvasProps> = ({
   onInteraction,
   highlightColorKey,
   onHighlightComplete,
+  textPreview,
 }) => {
   const [darkModeState, setDarkModeState] = useState<boolean | null>(null);
   const touchStartPosRef = useRef<{ x: number; y: number; pageX: number; pageY: number } | null>(null);
@@ -153,9 +182,9 @@ const PixelatedPreviewCanvas: React.FC<PixelatedPreviewCanvasProps> = ({
     // Ensure darkModeState is not null before drawing
     if (mappedPixelData && gridDimensions && canvasRef.current && darkModeState !== null) {
       console.log(`Redrawing canvas, dark mode: ${darkModeState}`); // Log redraw trigger
-      drawPixelatedCanvas(mappedPixelData, canvasRef.current, gridDimensions, highlightColorKey, isHighlighting);
+      drawPixelatedCanvas(mappedPixelData, canvasRef.current, gridDimensions, highlightColorKey, isHighlighting, textPreview);
     }
-  }, [mappedPixelData, gridDimensions, canvasRef, darkModeState, highlightColorKey, isHighlighting]); // Add darkModeState dependency
+  }, [mappedPixelData, gridDimensions, canvasRef, darkModeState, highlightColorKey, isHighlighting, textPreview]); // Add darkModeState dependency
 
   // 处理高亮效果
   useEffect(() => {
@@ -192,7 +221,7 @@ const PixelatedPreviewCanvas: React.FC<PixelatedPreviewCanvasProps> = ({
     // 鼠标点击行为保持不变：
     // 手动模式下：上色
     // 非手动模式下：切换tooltip
-    onInteraction(event.clientX, event.clientY, event.pageX, event.pageY, isManualColoringMode);
+    onInteraction(event.clientX, event.clientY, event.pageX, event.pageY, true);
   };
 
   // --- 触摸事件处理 ---
@@ -278,4 +307,4 @@ const PixelatedPreviewCanvas: React.FC<PixelatedPreviewCanvasProps> = ({
   );
 };
 
-export default PixelatedPreviewCanvas; 
+export default PixelatedPreviewCanvas;

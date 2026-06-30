@@ -77,10 +77,49 @@ import FloatingColorPalette from '../components/FloatingColorPalette';
 import FloatingToolbar from '../components/FloatingToolbar';
 import MagnifierTool from '../components/MagnifierTool';
 import MagnifierSelectionOverlay from '../components/MagnifierSelectionOverlay';
+import TextToolPanel from '../components/TextToolPanel';
 import { loadPaletteSelections, savePaletteSelections, presetToSelections, PaletteSelections } from '../utils/localStorageUtils';
 import { TRANSPARENT_KEY, transparentColorData } from '../utils/pixelEditingUtils';
+import fusionTextAtlasJson from '../features/text-grid-core/generated/fusion-12-zh-hans-mono.v2026.05.07.json';
+import {
+  applyTextGridPatch,
+  createBlankTextGrid,
+  createTextGridPatch,
+  layoutTextPattern,
+  type GlyphAtlas,
+  type LetterSpacingCells,
+  type LineSpacingCells,
+  type OverwritePolicy,
+  type TextDirection,
+  type TextPatternSpec,
+  type TextPlacementResult,
+  type TextScale,
+} from '../features/text-grid-core';
 
 import FocusModePreDownloadModal from '../components/FocusModePreDownloadModal';
+
+const fusionTextAtlas = fusionTextAtlasJson as GlyphAtlas;
+
+function calculateStatsFromGrid(pixelData: MappedPixel[][]): {
+  colorCounts: { [hexKey: string]: { count: number; color: string } };
+  totalCount: number;
+} {
+  const counts: { [hexKey: string]: { count: number; color: string } } = {};
+  let totalCount = 0;
+
+  pixelData.flat().forEach(cell => {
+    if (cell && !cell.isExternal && cell.key !== TRANSPARENT_KEY) {
+      const cellHex = cell.color.toUpperCase();
+      if (!counts[cellHex]) {
+        counts[cellHex] = { count: 0, color: cellHex };
+      }
+      counts[cellHex].count++;
+      totalCount++;
+    }
+  });
+
+  return { colorCounts: counts, totalCount };
+}
 
 export default function Home() {
   const [originalImageSrc, setOriginalImageSrc] = useState<string | null>(null);
@@ -164,6 +203,19 @@ export default function Home() {
   // 新增：专心拼豆模式进入前下载提醒弹窗
   const [isFocusModePreDownloadModalOpen, setIsFocusModePreDownloadModalOpen] = useState<boolean>(false);
 
+  // 文字直出图纸工具
+  const [isTextToolActive, setIsTextToolActive] = useState<boolean>(false);
+  const [textToolText, setTextToolText] = useState<string>('绿色靓仔');
+  const [textToolDirection, setTextToolDirection] = useState<TextDirection>('horizontal');
+  const [textToolScale, setTextToolScale] = useState<TextScale>(1);
+  const [textToolLetterSpacing, setTextToolLetterSpacing] = useState<LetterSpacingCells>(1);
+  const [textToolLineSpacing, setTextToolLineSpacing] = useState<LineSpacingCells>(1);
+  const [textToolOverwritePolicy, setTextToolOverwritePolicy] = useState<OverwritePolicy>('empty-only');
+  const [textToolColorHex, setTextToolColorHex] = useState<string>('#1F9D8A');
+  const [textToolAnchor, setTextToolAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [blankGridWidthInput, setBlankGridWidthInput] = useState<string>('80');
+  const [blankGridHeightInput, setBlankGridHeightInput] = useState<string>('40');
+
 
   // 新增：编辑撤回历史栈（多步）
   interface EditSnapshot {
@@ -172,6 +224,7 @@ export default function Home() {
     totalBeadCount: number;
   }
   const [editHistory, setEditHistory] = useState<EditSnapshot[]>([]);
+  const [redoHistory, setRedoHistory] = useState<EditSnapshot[]>([]);
 
   // 新增：一键去背景撤回快照（单步）
   const [bgRemovalSnapshot, setBgRemovalSnapshot] = useState<EditSnapshot | null>(null);
@@ -214,18 +267,41 @@ export default function Home() {
       totalBeadCount,
     };
     setEditHistory(prev => [...prev.slice(-49), snapshot]);
+    setRedoHistory([]);
   }, [mappedPixelData, colorCounts, totalBeadCount]);
 
   // 编辑模式多步撤回
   const handleUndoEdit = useCallback(() => {
-    if (editHistory.length === 0) return;
+    if (editHistory.length === 0 || !mappedPixelData || !colorCounts) return;
     const snapshot = editHistory[editHistory.length - 1];
+    const currentSnapshot: EditSnapshot = {
+      mappedPixelData: mappedPixelData.map(row => row.map(cell => ({ ...cell }))),
+      colorCounts: { ...colorCounts },
+      totalBeadCount,
+    };
+    setRedoHistory(prev => [...prev.slice(-49), currentSnapshot]);
     setMappedPixelData(snapshot.mappedPixelData);
     setColorCounts(snapshot.colorCounts);
     setTotalBeadCount(snapshot.totalBeadCount);
     setEditHistory(prev => prev.slice(0, -1));
     showToast('已撤回上一步');
-  }, [editHistory, showToast]);
+  }, [editHistory, mappedPixelData, colorCounts, totalBeadCount, showToast]);
+
+  const handleRedoEdit = useCallback(() => {
+    if (redoHistory.length === 0 || !mappedPixelData || !colorCounts) return;
+    const snapshot = redoHistory[redoHistory.length - 1];
+    const currentSnapshot: EditSnapshot = {
+      mappedPixelData: mappedPixelData.map(row => row.map(cell => ({ ...cell }))),
+      colorCounts: { ...colorCounts },
+      totalBeadCount,
+    };
+    setEditHistory(prev => [...prev.slice(-49), currentSnapshot]);
+    setMappedPixelData(snapshot.mappedPixelData);
+    setColorCounts(snapshot.colorCounts);
+    setTotalBeadCount(snapshot.totalBeadCount);
+    setRedoHistory(prev => prev.slice(0, -1));
+    showToast('已重做上一步');
+  }, [redoHistory, mappedPixelData, colorCounts, totalBeadCount, showToast]);
 
   // 一键去背景单步撤回
   const handleUndoBgRemoval = useCallback(() => {
@@ -240,6 +316,7 @@ export default function Home() {
   // 清空编辑历史（参数变化、退出编辑模式等时调用）
   const clearEditHistory = useCallback(() => {
     setEditHistory([]);
+    setRedoHistory([]);
   }, []);
 
   // 放大镜像素编辑处理函数
@@ -1480,6 +1557,7 @@ export default function Home() {
     // 如果是触摸结束或鼠标离开事件，隐藏提示
     if (isTouchEnd) {
       setTooltipData(null);
+      setTextToolAnchor(null);
       return;
     }
 
@@ -1504,6 +1582,33 @@ export default function Home() {
 
     if (i >= 0 && i < N && j >= 0 && j < M) {
       const cellData = mappedPixelData[j][i];
+
+      if (isTextToolActive) {
+        const anchor = { x: i, y: j };
+        setTextToolAnchor(anchor);
+        setTooltipData(null);
+
+        if (isClick) {
+          const spec = buildTextPatternSpec(anchor);
+          const placement = layoutTextPattern(spec, fusionTextAtlas, {
+            width: N,
+            height: M,
+            cells: mappedPixelData,
+          });
+          if (placement.valid) {
+            handleCommitTextPlacement(placement, spec);
+          } else if (placement.missingCharacters.length > 0) {
+            showToast(`当前字体不支持：${placement.missingCharacters.map(item => item.grapheme).join('、')}`);
+          } else if (placement.outOfBounds.length > 0) {
+            showToast('文字超出画布边界');
+          } else if (placement.collisions.length > 0) {
+            showToast('文字与已有格子冲突');
+          } else {
+            showToast('文字无法放置');
+          }
+        }
+        return;
+      }
 
       // 颜色替换模式逻辑 - 选择源颜色
       if (isClick && colorReplaceState.isActive && colorReplaceState.step === 'select-source') {
@@ -1950,6 +2055,107 @@ export default function Home() {
     : [];
   const chartReady = Boolean(mappedPixelData && gridDimensions);
   const selectedColorLabel = selectedColor ? getColorKeyByHex(selectedColor.color.toUpperCase(), selectedColorSystem) : '未选择';
+  const selectedTextToolColor = useMemo(() => {
+    const normalized = textToolColorHex.toUpperCase();
+    return fullPaletteColors.find(color => color.color.toUpperCase() === normalized)
+      || fullPaletteColors[0]
+      || { key: 'H07', color: '#1F9D8A' };
+  }, [fullPaletteColors, textToolColorHex]);
+
+  useEffect(() => {
+    if (fullPaletteColors.length === 0) return;
+    const hasSelected = fullPaletteColors.some(color => color.color.toUpperCase() === textToolColorHex.toUpperCase());
+    if (!hasSelected) {
+      setTextToolColorHex(fullPaletteColors[0].color);
+    }
+  }, [fullPaletteColors, textToolColorHex]);
+
+  const buildTextPatternSpec = useCallback((anchor: { x: number; y: number }): TextPatternSpec => ({
+    text: textToolText,
+    atlasId: fusionTextAtlas.atlasId,
+    atlasVersion: fusionTextAtlas.fontVersion,
+    direction: textToolDirection,
+    scale: textToolScale,
+    letterSpacingCells: textToolLetterSpacing,
+    lineSpacingCells: textToolLineSpacing,
+    fillColorId: getColorKeyByHex(selectedTextToolColor.color.toUpperCase(), selectedColorSystem),
+    fillColorHex: selectedTextToolColor.color,
+    anchor,
+    overwritePolicy: textToolOverwritePolicy,
+  }), [
+    selectedColorSystem,
+    selectedTextToolColor,
+    textToolDirection,
+    textToolLetterSpacing,
+    textToolLineSpacing,
+    textToolOverwritePolicy,
+    textToolScale,
+    textToolText,
+  ]);
+
+  const textPlacementPreview = useMemo<TextPlacementResult | null>(() => {
+    if (!isTextToolActive || !textToolAnchor || !mappedPixelData || !gridDimensions || textToolText.trim().length === 0) {
+      return null;
+    }
+    const spec = buildTextPatternSpec(textToolAnchor);
+    return layoutTextPattern(spec, fusionTextAtlas, {
+      width: gridDimensions.N,
+      height: gridDimensions.M,
+      cells: mappedPixelData,
+    });
+  }, [buildTextPatternSpec, gridDimensions, isTextToolActive, mappedPixelData, textToolAnchor, textToolText]);
+
+  const handleCreateBlankGrid = useCallback(() => {
+    const width = Math.max(10, Math.min(300, Number(blankGridWidthInput) || 80));
+    const height = Math.max(10, Math.min(300, Number(blankGridHeightInput) || 40));
+    const blankGrid = createBlankTextGrid(width, height, transparentColorData) as MappedPixel[][];
+    const canvasWidth = Math.min(1100, Math.max(520, width * 10));
+
+    setOriginalImageSrc(null);
+    setMappedPixelData(blankGrid);
+    setGridDimensions({ N: width, M: height });
+    setPixelatedCanvasSize({ width: canvasWidth, height: Math.round(canvasWidth * height / width) });
+    setColorCounts({});
+    setTotalBeadCount(0);
+    setInitialGridColorKeys(new Set());
+    setExcludedColorKeys(new Set());
+    setIsManualColoringMode(false);
+    setSelectedColor(null);
+    setIsEraseMode(false);
+    clearEditHistory();
+    setTextToolAnchor(null);
+    setIsTextToolActive(true);
+    setBlankGridWidthInput(String(width));
+    setBlankGridHeightInput(String(height));
+    showToast(`已新建 ${width} x ${height} 空白图纸`);
+  }, [blankGridHeightInput, blankGridWidthInput, clearEditHistory, showToast]);
+
+  const handleCommitTextPlacement = useCallback((placement: TextPlacementResult, spec: TextPatternSpec) => {
+    if (!mappedPixelData || !gridDimensions || !placement.valid) return;
+
+    if (spec.overwritePolicy === 'overwrite') {
+      const overwriteCount = placement.cells.filter(cell => {
+        const existing = mappedPixelData[cell.y]?.[cell.x];
+        return existing && !existing.isExternal;
+      }).length;
+      if (overwriteCount > 0 && !window.confirm(`文字会覆盖 ${overwriteCount} 个已有格子，确定继续吗？`)) {
+        return;
+      }
+    }
+
+    const patch = createTextGridPatch(mappedPixelData, placement, spec);
+    if (!patch) return;
+    saveEditSnapshot();
+    const nextGrid = applyTextGridPatch(mappedPixelData, patch, 'redo') as MappedPixel[][];
+    const stats = calculateStatsFromGrid(nextGrid);
+
+    setMappedPixelData(nextGrid);
+    setColorCounts(stats.colorCounts);
+    setTotalBeadCount(stats.totalCount);
+    setInitialGridColorKeys(new Set(Object.keys(stats.colorCounts)));
+    setTextToolAnchor(null);
+    showToast('已放置文字');
+  }, [gridDimensions, mappedPixelData, saveEditSnapshot, showToast]);
 
   return (
     <div data-workbench-shell className="min-h-screen bg-[#f5f7f8] text-[#17201f] font-[family-name:var(--font-geist-sans)]">
@@ -1999,9 +2205,40 @@ export default function Home() {
           <section className="rounded-lg border border-[#dce5e2] bg-white p-4 shadow-sm"><div className="mb-3 flex items-start justify-between gap-3"><div><h2 className="text-sm font-semibold text-[#17201f]">色板</h2><p className="mt-1 text-xs text-[#6f7d7b]">当前启用 {selectedPaletteCount || activePalette.length} 色</p></div>{isCustomPalette ? <span className="rounded-full bg-[#fff7dd] px-2 py-1 text-[11px] text-[#8a6414]">自定义</span> : null}</div><div className="grid grid-cols-2 gap-2">{colorSystemOptions.map((option) => <button key={option.key} type="button" onClick={() => setSelectedColorSystem(option.key as ColorSystem)} className={'h-9 rounded-md border text-xs font-medium transition ' + (selectedColorSystem === option.key ? 'border-[#1f9d8a] bg-[#e7f3f0] text-[#176b5f]' : 'border-[#d2dedb] bg-white text-[#5d6b69] hover:bg-[#f7fbfa]')}>{option.name}</button>)}</div><div className="mt-3 grid grid-cols-3 gap-2"><button type="button" onClick={() => setIsCustomPaletteEditorOpen(true)} className="h-9 rounded-md border border-[#d2dedb] bg-white text-xs font-medium text-[#3b4947] hover:bg-[#f7fbfa]">编辑</button><button type="button" onClick={handleExportCustomPalette} className="h-9 rounded-md border border-[#d2dedb] bg-white text-xs font-medium text-[#3b4947] hover:bg-[#f7fbfa]">导出</button><button type="button" onClick={triggerImportPalette} className="h-9 rounded-md border border-[#d2dedb] bg-white text-xs font-medium text-[#3b4947] hover:bg-[#f7fbfa]">导入</button></div></section>
         </aside>
 
-        <section data-canvas-stage className="min-h-[calc(100vh-104px)] rounded-lg border border-[#dce5e2] bg-white shadow-sm"><div className="flex min-h-full flex-col"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e4ece9] px-4 py-3"><div><h2 className="text-sm font-semibold text-[#17201f]">图纸画布</h2><p className="mt-1 text-xs text-[#6f7d7b]">{gridDimensions ? gridDimensions.N + ' x ' + gridDimensions.M + ' 格 · ' + totalBeadCount + ' 颗 · ' + colorCountEntries.length + ' 色' : '导入源图后在这里查看拼豆图纸'}</p></div><div className="flex items-center gap-2"><button type="button" onClick={() => setIsManualColoringMode(!isManualColoringMode)} disabled={!chartReady} className={'h-9 rounded-md border px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-45 ' + (isManualColoringMode ? 'border-[#1f9d8a] bg-[#e7f3f0] text-[#176b5f]' : 'border-[#d2dedb] bg-white text-[#3b4947] hover:bg-[#f7fbfa]')}>{isManualColoringMode ? '退出编辑' : '编辑颜色'}</button><div className="flex items-center gap-1"><button type="button" onClick={() => setCanvasZoom(Math.max(0.5, canvasZoom - 0.25))} disabled={!chartReady} className="h-8 w-8 rounded-md border border-[#d2dedb] bg-white text-xs font-semibold text-[#3b4947] hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45" title="缩小">−</button><span className="w-12 text-center text-xs font-mono text-[#1f7669]">{Math.round(canvasZoom * 100)}%</span><button type="button" onClick={() => setCanvasZoom(Math.min(3, canvasZoom + 0.25))} disabled={!chartReady} className="h-8 w-8 rounded-md border border-[#d2dedb] bg-white text-xs font-semibold text-[#3b4947] hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45" title="放大">+</button><button type="button" onClick={() => setCanvasZoom(1)} disabled={!chartReady || canvasZoom === 1} className="h-8 rounded-md border border-[#d2dedb] bg-white px-2 text-[11px] font-medium text-[#3b4947] hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45">1:1</button></div><button type="button" onClick={handleEnterFocusMode} disabled={!chartReady} className="h-9 rounded-md border border-[#d2dedb] bg-white px-3 text-xs font-semibold text-[#3b4947] transition hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45">专心拼豆</button></div></div><div className="relative flex flex-1 items-center justify-center overflow-auto bg-[linear-gradient(90deg,#edf2f1_1px,transparent_1px),linear-gradient(#edf2f1_1px,transparent_1px)] bg-[length:24px_24px] p-4 sm:p-6"><canvas ref={originalCanvasRef} className="hidden" />{chartReady ? <div className="relative rounded-md border border-[#cfdedb] bg-white p-2 shadow-sm"><PixelatedPreviewCanvas mappedPixelData={mappedPixelData} gridDimensions={gridDimensions} isManualColoringMode={isManualColoringMode} canvasRef={pixelatedCanvasRef} canvasWidth={pixelatedCanvasSize?.width} canvasHeight={pixelatedCanvasSize?.height} zoom={canvasZoom} onInteraction={handleCanvasInteraction} highlightColorKey={highlightColorKey} onHighlightComplete={handleHighlightComplete} /><GridTooltip tooltipData={tooltipData} selectedColorSystem={selectedColorSystem} /></div> : <div className="flex max-w-md flex-col items-center text-center"><div className="mb-5 grid h-28 w-28 grid-cols-7 gap-1 rounded-lg border border-[#dce5e2] bg-white p-3 shadow-sm">{Array.from({ length: 49 }).map((_, index) => <span key={index} className="rounded-[2px]" style={{ backgroundColor: index % 7 === 0 ? '#1f9d8a' : index % 5 === 0 ? '#f2cf5b' : index % 4 === 0 ? '#ef7b67' : '#e5ecea' }} />)}</div><h3 className="text-lg font-semibold text-[#17201f]">从一张图片开始生成拼豆图纸</h3><p className="mt-2 text-sm leading-6 text-[#6f7d7b]">左侧导入源图，设定颗粒宽度和色板后，画布会显示可编辑的拼豆网格。</p><button type="button" onClick={isMounted ? triggerFileInput : undefined} disabled={!isMounted} className="mt-5 h-10 rounded-md bg-[#1f9d8a] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#188775] disabled:cursor-not-allowed disabled:bg-[#a7c9c3]">导入图片</button></div>}</div><div data-action-bar className="grid gap-2 border-t border-[#e4ece9] bg-[#fbfdfc] px-4 py-3 sm:grid-cols-5"><div className="flex items-center gap-1"><button type="button" onClick={() => handleShiftCanvas('left')} disabled={!chartReady} className="h-9 w-9 rounded-md border border-[#d2dedb] bg-white text-sm font-semibold text-[#3b4947] hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45" title="向左移动">←</button><button type="button" onClick={() => handleShiftCanvas('up')} disabled={!chartReady} className="h-9 w-9 rounded-md border border-[#d2dedb] bg-white text-sm font-semibold text-[#3b4947] hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45" title="向上移动">↑</button><button type="button" onClick={() => handleShiftCanvas('down')} disabled={!chartReady} className="h-9 w-9 rounded-md border border-[#d2dedb] bg-white text-sm font-semibold text-[#3b4947] hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45" title="向下移动">↓</button><button type="button" onClick={() => handleShiftCanvas('right')} disabled={!chartReady} className="h-9 w-9 rounded-md border border-[#d2dedb] bg-white text-sm font-semibold text-[#3b4947] hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45" title="向右移动">→</button></div><button type="button" onClick={handleAutoRemoveBackground} disabled={!chartReady} className="h-9 rounded-md border border-[#d2dedb] bg-white text-xs font-semibold text-[#3b4947] transition hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45">去除背景</button><button type="button" onClick={handleUndoBgRemoval} disabled={!bgRemovalSnapshot} className="h-9 rounded-md border border-[#d2dedb] bg-white text-xs font-semibold text-[#3b4947] transition hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45">撤回背景</button><button type="button" onClick={handleUndoEdit} disabled={editHistory.length === 0} className="h-9 rounded-md border border-[#d2dedb] bg-white text-xs font-semibold text-[#3b4947] transition hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45">撤回编辑</button><button type="button" onClick={() => setIsDownloadSettingsOpen(true)} disabled={!chartReady} className="h-9 rounded-md bg-[#17201f] text-xs font-semibold text-white transition hover:bg-[#2c3836] disabled:cursor-not-allowed disabled:bg-[#a9b5b2]">导出文件</button></div></div></section>
+        <section data-canvas-stage className="min-h-[calc(100vh-104px)] rounded-lg border border-[#dce5e2] bg-white shadow-sm"><div className="flex min-h-full flex-col"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e4ece9] px-4 py-3"><div><h2 className="text-sm font-semibold text-[#17201f]">图纸画布</h2><p className="mt-1 text-xs text-[#6f7d7b]">{gridDimensions ? gridDimensions.N + ' x ' + gridDimensions.M + ' 格 · ' + totalBeadCount + ' 颗 · ' + colorCountEntries.length + ' 色' : '导入源图后在这里查看拼豆图纸'}</p></div><div className="flex items-center gap-2"><button type="button" onClick={() => { setIsManualColoringMode(!isManualColoringMode); setIsTextToolActive(false); setTextToolAnchor(null); }} disabled={!chartReady} className={'h-9 rounded-md border px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-45 ' + (isManualColoringMode ? 'border-[#1f9d8a] bg-[#e7f3f0] text-[#176b5f]' : 'border-[#d2dedb] bg-white text-[#3b4947] hover:bg-[#f7fbfa]')}>{isManualColoringMode ? '退出编辑' : '编辑颜色'}</button><div className="flex items-center gap-1"><button type="button" onClick={() => setCanvasZoom(Math.max(0.5, canvasZoom - 0.25))} disabled={!chartReady} className="h-8 w-8 rounded-md border border-[#d2dedb] bg-white text-xs font-semibold text-[#3b4947] hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45" title="缩小">−</button><span className="w-12 text-center text-xs font-mono text-[#1f7669]">{Math.round(canvasZoom * 100)}%</span><button type="button" onClick={() => setCanvasZoom(Math.min(3, canvasZoom + 0.25))} disabled={!chartReady} className="h-8 w-8 rounded-md border border-[#d2dedb] bg-white text-xs font-semibold text-[#3b4947] hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45" title="放大">+</button><button type="button" onClick={() => setCanvasZoom(1)} disabled={!chartReady || canvasZoom === 1} className="h-8 rounded-md border border-[#d2dedb] bg-white px-2 text-[11px] font-medium text-[#3b4947] hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45">1:1</button></div><button type="button" onClick={handleEnterFocusMode} disabled={!chartReady} className="h-9 rounded-md border border-[#d2dedb] bg-white px-3 text-xs font-semibold text-[#3b4947] transition hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45">专心拼豆</button></div></div><div className="relative flex flex-1 items-center justify-center overflow-auto bg-[linear-gradient(90deg,#edf2f1_1px,transparent_1px),linear-gradient(#edf2f1_1px,transparent_1px)] bg-[length:24px_24px] p-4 sm:p-6"><canvas ref={originalCanvasRef} className="hidden" />{chartReady ? <div className="relative rounded-md border border-[#cfdedb] bg-white p-2 shadow-sm"><PixelatedPreviewCanvas mappedPixelData={mappedPixelData} gridDimensions={gridDimensions} isManualColoringMode={isManualColoringMode} canvasRef={pixelatedCanvasRef} canvasWidth={pixelatedCanvasSize?.width} canvasHeight={pixelatedCanvasSize?.height} zoom={canvasZoom} onInteraction={handleCanvasInteraction} highlightColorKey={highlightColorKey} onHighlightComplete={handleHighlightComplete} textPreview={textPlacementPreview} /><GridTooltip tooltipData={tooltipData} selectedColorSystem={selectedColorSystem} /></div> : <div className="flex max-w-md flex-col items-center text-center"><div className="mb-5 grid h-28 w-28 grid-cols-7 gap-1 rounded-lg border border-[#dce5e2] bg-white p-3 shadow-sm">{Array.from({ length: 49 }).map((_, index) => <span key={index} className="rounded-[2px]" style={{ backgroundColor: index % 7 === 0 ? '#1f9d8a' : index % 5 === 0 ? '#f2cf5b' : index % 4 === 0 ? '#ef7b67' : '#e5ecea' }} />)}</div><h3 className="text-lg font-semibold text-[#17201f]">从一张图片开始生成拼豆图纸</h3><p className="mt-2 text-sm leading-6 text-[#6f7d7b]">左侧导入源图，设定颗粒宽度和色板后，画布会显示可编辑的拼豆网格。</p><button type="button" onClick={isMounted ? triggerFileInput : undefined} disabled={!isMounted} className="mt-5 h-10 rounded-md bg-[#1f9d8a] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#188775] disabled:cursor-not-allowed disabled:bg-[#a7c9c3]">导入图片</button></div>}</div><div data-action-bar className="grid gap-2 border-t border-[#e4ece9] bg-[#fbfdfc] px-4 py-3 sm:grid-cols-6"><div className="flex items-center gap-1"><button type="button" onClick={() => handleShiftCanvas('left')} disabled={!chartReady} className="h-9 w-9 rounded-md border border-[#d2dedb] bg-white text-sm font-semibold text-[#3b4947] hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45" title="向左移动">←</button><button type="button" onClick={() => handleShiftCanvas('up')} disabled={!chartReady} className="h-9 w-9 rounded-md border border-[#d2dedb] bg-white text-sm font-semibold text-[#3b4947] hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45" title="向上移动">↑</button><button type="button" onClick={() => handleShiftCanvas('down')} disabled={!chartReady} className="h-9 w-9 rounded-md border border-[#d2dedb] bg-white text-sm font-semibold text-[#3b4947] hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45" title="向下移动">↓</button><button type="button" onClick={() => handleShiftCanvas('right')} disabled={!chartReady} className="h-9 w-9 rounded-md border border-[#d2dedb] bg-white text-sm font-semibold text-[#3b4947] hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45" title="向右移动">→</button></div><button type="button" onClick={handleAutoRemoveBackground} disabled={!chartReady} className="h-9 rounded-md border border-[#d2dedb] bg-white text-xs font-semibold text-[#3b4947] transition hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45">去除背景</button><button type="button" onClick={handleUndoBgRemoval} disabled={!bgRemovalSnapshot} className="h-9 rounded-md border border-[#d2dedb] bg-white text-xs font-semibold text-[#3b4947] transition hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45">撤回背景</button><button type="button" onClick={handleUndoEdit} disabled={editHistory.length === 0} className="h-9 rounded-md border border-[#d2dedb] bg-white text-xs font-semibold text-[#3b4947] transition hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45">撤回编辑</button><button type="button" onClick={handleRedoEdit} disabled={redoHistory.length === 0} className="h-9 rounded-md border border-[#d2dedb] bg-white text-xs font-semibold text-[#3b4947] transition hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45">重做编辑</button><button type="button" onClick={() => setIsDownloadSettingsOpen(true)} disabled={!chartReady} className="h-9 rounded-md bg-[#17201f] text-xs font-semibold text-white transition hover:bg-[#2c3836] disabled:cursor-not-allowed disabled:bg-[#a9b5b2]">导出文件</button></div></div></section>
 
         <aside data-palette-panel className="space-y-4 md:sticky md:top-[72px] md:h-[calc(100vh-88px)] md:overflow-auto"><section className="rounded-lg border border-[#dce5e2] bg-white p-4 shadow-sm"><div className="mb-4 flex items-start justify-between gap-3"><div><h2 className="text-sm font-semibold text-[#17201f]">颜色清理</h2><p className="mt-1 text-xs text-[#6f7d7b]">核对用量，隐藏噪点颜色或进入手动编辑</p></div><span className="rounded-full bg-[#f1f4f3] px-2 py-1 text-[11px] text-[#697775]">{colorCountEntries.length} 色</span></div><div className="grid grid-cols-3 gap-2 text-center"><div className="rounded-md bg-[#f5f7f8] p-3"><div className="text-lg font-semibold text-[#17201f]">{gridDimensions?.N || 0}</div><div className="mt-1 text-[11px] text-[#6f7d7b]">宽</div></div><div className="rounded-md bg-[#f5f7f8] p-3"><div className="text-lg font-semibold text-[#17201f]">{gridDimensions?.M || 0}</div><div className="mt-1 text-[11px] text-[#6f7d7b]">高</div></div><div className="rounded-md bg-[#f5f7f8] p-3"><div className="text-lg font-semibold text-[#17201f]">{totalBeadCount}</div><div className="mt-1 text-[11px] text-[#6f7d7b]">颗</div></div></div></section>
+          <TextToolPanel
+            chartReady={chartReady}
+            isTextToolActive={isTextToolActive}
+            onToggleTextTool={() => {
+              setIsTextToolActive(current => !current);
+              setIsManualColoringMode(false);
+              setTextToolAnchor(null);
+            }}
+            blankGridWidthInput={blankGridWidthInput}
+            onBlankGridWidthInputChange={setBlankGridWidthInput}
+            blankGridHeightInput={blankGridHeightInput}
+            onBlankGridHeightInputChange={setBlankGridHeightInput}
+            onCreateBlankGrid={handleCreateBlankGrid}
+            textToolText={textToolText}
+            onTextToolTextChange={setTextToolText}
+            selectedTextToolColor={selectedTextToolColor}
+            textToolColorOptions={fullPaletteColors}
+            selectedColorSystem={selectedColorSystem}
+            onTextToolColorHexChange={setTextToolColorHex}
+            textToolDirection={textToolDirection}
+            onTextToolDirectionChange={setTextToolDirection}
+            textToolScale={textToolScale}
+            onTextToolScaleChange={setTextToolScale}
+            textToolLetterSpacing={textToolLetterSpacing}
+            onTextToolLetterSpacingChange={setTextToolLetterSpacing}
+            textToolLineSpacing={textToolLineSpacing}
+            onTextToolLineSpacingChange={setTextToolLineSpacing}
+            textToolOverwritePolicy={textToolOverwritePolicy}
+            onTextToolOverwritePolicyChange={setTextToolOverwritePolicy}
+            textPlacementPreview={textPlacementPreview}
+          />
           <section className="rounded-lg border border-[#dce5e2] bg-white p-4 shadow-sm"><div className="mb-3 flex items-center justify-between gap-3"><h2 className="text-sm font-semibold text-[#17201f]">图中颜色</h2><button type="button" onClick={() => setShowExcludedColors(!showExcludedColors)} disabled={!colorCounts} className="h-8 rounded-md border border-[#d2dedb] bg-white px-2 text-xs font-medium text-[#3b4947] hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45">{showExcludedColors ? '显示图中' : '显示排除'}</button></div><div className="max-h-[390px] space-y-2 overflow-auto pr-1">{colorCountEntries.length > 0 ? colorCountEntries.map(([hexKey, data]) => { const displayKey = getColorKeyByHex(hexKey, selectedColorSystem); const isExcluded = excludedColorKeys.has(hexKey); if (excludedColorKeys.size > 0 && showExcludedColors !== isExcluded) return null; return <div key={hexKey} className="flex items-center gap-3 rounded-md border border-[#e4ece9] bg-[#fbfdfc] p-2"><button type="button" onClick={() => handleHighlightColor(hexKey)} className="h-8 w-8 shrink-0 rounded border border-black/10 shadow-inner" style={{ backgroundColor: data.color }} aria-label={'高亮 ' + displayKey} /><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><span className="font-mono text-xs font-semibold text-[#17201f]">{displayKey}</span><span className="text-xs text-[#6f7d7b]">{data.count} 颗</span></div><div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#e6eeeb]"><div className="h-full rounded-full bg-[#1f9d8a]" style={{ width: Math.max(4, Math.min(100, (data.count / Math.max(totalBeadCount, 1)) * 100)) + '%' }} /></div></div><button type="button" onClick={() => handleToggleExcludeColor(hexKey)} className={'h-8 rounded-md border px-2 text-[11px] font-medium transition ' + (isExcluded ? 'border-[#f0c9b9] bg-[#fff1eb] text-[#9c4324]' : 'border-[#d2dedb] bg-white text-[#3b4947] hover:bg-[#f7fbfa]')}>{isExcluded ? '恢复' : '排除'}</button></div>; }) : <div className="rounded-md border border-dashed border-[#d2dedb] bg-[#fbfdfc] px-4 py-8 text-center text-sm text-[#7a8785]">生成图纸后显示颜色用量</div>}</div></section>
           <section className="rounded-lg border border-[#dce5e2] bg-white p-4 shadow-sm"><div className="mb-3 flex items-center justify-between gap-3"><div><h2 className="text-sm font-semibold text-[#17201f]">编辑工具</h2><p className="mt-1 text-xs text-[#6f7d7b]">当前颜色：{selectedColorLabel}</p></div><button type="button" onClick={() => setIsManualColoringMode(true)} disabled={!chartReady} className="h-8 rounded-md bg-[#1f9d8a] px-3 text-xs font-semibold text-white hover:bg-[#188775] disabled:cursor-not-allowed disabled:bg-[#a7c9c3]">开始编辑</button></div><div className="grid grid-cols-2 gap-2"><button type="button" onClick={handleToggleFullPalette} disabled={!chartReady} className="h-9 rounded-md border border-[#d2dedb] bg-white text-xs font-medium text-[#3b4947] hover:bg-[#f7fbfa] disabled:cursor-not-allowed disabled:opacity-45">{showFullPalette ? '图中颜色' : '完整色板'}</button><button type="button" onClick={handleColorReplaceToggle} disabled={!chartReady} className={'h-9 rounded-md border text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-45 ' + (colorReplaceState.isActive ? 'border-[#1f9d8a] bg-[#e7f3f0] text-[#176b5f]' : 'border-[#d2dedb] bg-white text-[#3b4947] hover:bg-[#f7fbfa]')}>替换颜色</button><button type="button" onClick={handleEraseToggle} disabled={!chartReady} className={'h-9 rounded-md border text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-45 ' + (isEraseMode ? 'border-[#f0a977] bg-[#fff1e6] text-[#9c4f12]' : 'border-[#d2dedb] bg-white text-[#3b4947] hover:bg-[#f7fbfa]')}>擦除背景块</button><button type="button" onClick={handleToggleMagnifier} disabled={!chartReady} className={'h-9 rounded-md border text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-45 ' + (isMagnifierActive ? 'border-[#1f9d8a] bg-[#e7f3f0] text-[#176b5f]' : 'border-[#d2dedb] bg-white text-[#3b4947] hover:bg-[#f7fbfa]')}>放大镜</button></div></section></aside>
       </main>
