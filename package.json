@@ -8,11 +8,12 @@
     "start": "node .next/standalone/server.js",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test:text-grid": "node --experimental-strip-types --test src/features/text-grid-core/text-grid-core.test.ts",
+    "test:text-grid": "node --experimental-strip-types --test src/features/text-grid-core/text-grid-core.test.ts src/features/text-chart/generateTextChart.test.ts",
+    "test:text-chart": "node --experimental-strip-types --test src/features/text-chart/generateTextChart.test.ts",
     "text-font:build": "node scripts/build-text-glyph-atlas.mjs",
     "text-font:verify": "node scripts/build-text-glyph-atlas.mjs --check",
     "verify:ui-contract": "node scripts/verify-ui-contract.mjs",
-    "check": "npm run typecheck && npm run lint && npm run verify:ui-contract && npm run build",
+    "check": "npm run test:text-grid && npm run text-font:verify && npm run typecheck && npm run lint && npm run verify:ui-contract && npm run build",
     "healthz": "node -e \"require('http').get('http://localhost:3000/api/healthz', r => { let d=''; r.on('data',c=>d+=c); r.on('end',()=>{ console.log(d); process.exit(r.statusCode===200?0:1); }); })\""
   },
   "dependencies": {

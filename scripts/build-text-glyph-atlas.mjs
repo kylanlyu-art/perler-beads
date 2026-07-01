@@ -9,7 +9,7 @@ const args = process.argv.slice(2);
 const shouldCheck = args.includes('--check');
 const zipPath = args.find((arg) => arg !== '--check') ?? process.env.FUSION_BDF_ZIP;
 
-if (!zipPath) {
+if (!zipPath && !shouldCheck) {
   throw new Error('Usage: node scripts/build-text-glyph-atlas.mjs [--check] <fusion-12px-monospaced-bdf.zip>');
 }
 
@@ -121,13 +121,26 @@ function buildAtlas() {
   };
 }
 
-const { atlas, glyphCount, generatedDigest } = buildAtlas();
-const serializedAtlas = `${JSON.stringify(atlas, null, 2)}\n`;
-
 if (shouldCheck) {
   if (!existsSync(outputPath)) {
     throw new Error(`Missing generated atlas: ${outputPath}`);
   }
+  if (!zipPath) {
+    const currentAtlas = JSON.parse(readFileSync(outputPath, 'utf8'));
+    const currentDigest = `sha256:${createHash('sha256')
+      .update(JSON.stringify({ ...currentAtlas, generatedDigest: '' }))
+      .digest('hex')}`;
+    if (currentAtlas.generatedDigest !== currentDigest) {
+      throw new Error(`Atlas generatedDigest mismatch: expected ${currentDigest}, got ${currentAtlas.generatedDigest}`);
+    }
+    console.log(`Verified committed atlas metadata: ${outputPath}`);
+    console.log(`Glyphs: ${Object.keys(currentAtlas.glyphs ?? {}).length}`);
+    console.log(`Digest: ${currentDigest}`);
+    process.exit(0);
+  }
+
+  const { atlas, glyphCount, generatedDigest } = buildAtlas();
+  const serializedAtlas = `${JSON.stringify(atlas, null, 2)}\n`;
   const currentAtlas = readFileSync(outputPath, 'utf8');
   if (currentAtlas !== serializedAtlas) {
     console.error(`Atlas is out of date: ${outputPath}`);
@@ -140,6 +153,8 @@ if (shouldCheck) {
   process.exit(0);
 }
 
+const { atlas, glyphCount, generatedDigest } = buildAtlas();
+const serializedAtlas = `${JSON.stringify(atlas, null, 2)}\n`;
 mkdirSync(dirname(outputPath), { recursive: true });
 writeFileSync(outputPath, serializedAtlas);
 console.log(`Generated ${outputPath}`);

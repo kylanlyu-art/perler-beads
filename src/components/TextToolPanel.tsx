@@ -72,7 +72,7 @@ export default function TextToolPanel({
     ? textPlacementPreview.valid
       ? `${textPlacementPreview.cells.length} 颗预览`
       : '预览不可提交'
-    : '像素字形直写图纸';
+    : '在当前图纸上追加像素字';
 
   const invalidPreviewMessage = textPlacementPreview && !textPlacementPreview.valid
     ? textPlacementPreview.missingCharacters.length > 0
@@ -88,7 +88,7 @@ export default function TextToolPanel({
     <section data-text-tool-panel className="rounded-lg border border-[#dce5e2] bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold text-[#17201f]">文字工具</h2>
+          <h2 className="text-sm font-semibold text-[#17201f]">高级文字叠加</h2>
           <p className="mt-1 text-xs text-[#6f7d7b]">{previewStatus}</p>
         </div>
         <button
@@ -103,10 +103,13 @@ export default function TextToolPanel({
       </div>
 
       <div className="space-y-3">
-        <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
+        <div className="rounded-md border border-[#edf2f0] bg-[#fbfdfc] p-2">
+          <p className="mb-2 text-[11px] font-medium text-[#6f7d7b]">没有图纸时可新建空白底稿</p>
+          <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
           <input type="number" min="10" max="300" value={blankGridWidthInput} onChange={(event) => onBlankGridWidthInputChange(event.target.value)} className="h-9 rounded-md border border-[#d2dedb] px-2 text-xs outline-none focus:border-[#1f9d8a] focus:ring-2 focus:ring-[#1f9d8a]/15" aria-label="空白图纸宽度" />
           <input type="number" min="10" max="300" value={blankGridHeightInput} onChange={(event) => onBlankGridHeightInputChange(event.target.value)} className="h-9 rounded-md border border-[#d2dedb] px-2 text-xs outline-none focus:border-[#1f9d8a] focus:ring-2 focus:ring-[#1f9d8a]/15" aria-label="空白图纸高度" />
           <button type="button" onClick={onCreateBlankGrid} className="h-9 rounded-md border border-[#d2dedb] bg-white px-2 text-xs font-medium text-[#3b4947] hover:bg-[#f7fbfa]">新建</button>
+          </div>
         </div>
 
         <textarea value={textToolText} onChange={(event) => onTextToolTextChange(event.target.value)} rows={3} className="w-full resize-none rounded-md border border-[#d2dedb] bg-white px-3 py-2 text-sm leading-5 outline-none focus:border-[#1f9d8a] focus:ring-2 focus:ring-[#1f9d8a]/15" placeholder="绿色靓仔" />
