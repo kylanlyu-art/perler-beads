@@ -1,5 +1,3 @@
-import Link from 'next/link';
-
 const entryCards = [
   {
     href: '/create/image',
@@ -26,12 +24,12 @@ export default function Home() {
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#1f7669]">Juice 拼豆</p>
             <h1 className="mt-2 text-2xl font-semibold sm:text-3xl">选择图纸生成方式</h1>
           </div>
-          <Link
+          <a
             href="/workbench"
             className="rounded-md border border-[#cfdedb] bg-white px-3 py-2 text-sm font-semibold text-[#2c3a38] transition hover:bg-[#eef5f3]"
           >
             打开工作台
-          </Link>
+          </a>
         </header>
 
         <section className="grid flex-1 items-center gap-6 py-8 lg:grid-cols-[0.85fr_1.15fr]">
@@ -58,7 +56,7 @@ export default function Home() {
 
           <div className="grid gap-4 sm:grid-cols-2">
             {entryCards.map((card) => (
-              <Link
+              <a
                 key={card.href}
                 href={card.href}
                 className="group flex min-h-[360px] flex-col justify-between rounded-lg border border-[#dbe6e3] bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-[#b9d2cc] hover:shadow-md"
@@ -80,7 +78,7 @@ export default function Home() {
                   <span>{card.action}</span>
                   <span className="transition group-hover:translate-x-1">→</span>
                 </div>
-              </Link>
+              </a>
             ))}
           </div>
         </section>
@@ -88,4 +86,3 @@ export default function Home() {
     </main>
   );
 }
-
